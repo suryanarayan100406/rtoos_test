@@ -1,0 +1,32 @@
+# Keep the Docker build context small and reproducible.
+.git
+.github
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Run outputs and local data (never bake into an image)
+runs/
+data/
+*.mp4
+*.MP4
+*.srt
+*.SRT
+*.las
+*.laz
+*.ply
+*.glb
+
+# Frontend build artifacts / deps (built inside the image or separately)
+viewer/node_modules
+viewer/dist
+
+# Editor / OS cruft
+.DS_Store
+.idea
+.vscode

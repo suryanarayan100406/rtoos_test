@@ -1,0 +1,133 @@
+# DRISHTI base configuration — every tunable lives in config (no hardcoded values in code).
+# Precedence (highest wins): CLI flags > env (DRISHTI_*) > dataset descriptor > profile > this file.
+# See docs/implementation/02-SYSTEM-DESIGN.md §5.
+
+run:
+  # output root for project bundles; a per-run id subdir is created under it
+  output_root: runs
+  seed: 1234
+  # profile is normally set via --profile; recorded here for completeness
+  profile: balanced
+
+compute:
+  # placement policy: "auto" lets the runner decide per stage ComputeNeed + detected hardware.
+  # "force_local" / "force_cloud" override for debugging. Per-stage overrides allowed under stages:.
+  placement: auto
+  local_vram_gb: 0        # no discrete GPU on the reference machine; iGPU handled via OpenVINO
+  cloud_vram_gb: 16       # free T4 budget
+  prefer_openvino: true   # use Arc iGPU/NPU locally where a model has an OpenVINO path
+  max_workers: 0          # 0 => auto (cpu_count - 1)
+
+ingest:                   # S0
+  # frame sampling: decode at most this fps for processing (0 => native)
+  target_fps: 4
+  max_frames: 0           # 0 => no cap
+  time_offset_s: 0.0      # manual video<->telemetry offset if a dataset needs it (default none)
+
+frameqa:                  # S1
+  blur_min_varlap: 100.0  # min variance-of-Laplacian to accept a frame (sharper => higher)
+  exposure_low: 0.02      # reject if > this fraction of pixels are clipped black
+  exposure_high: 0.02     # reject if > this fraction of pixels are clipped white
+  keyframe:
+    method: parallax      # parallax | fixed_stride | feature_disp
+    min_parallax_px: 8.0
+    stride: 5             # used when method == fixed_stride
+    max_keyframes: 0      # 0 => no cap
+
+poses:                    # S2
+  sfm_backend: colmap     # colmap (pycolmap) then optional glomap refine
+  use_glomap: true
+  matcher: sequential     # sequential | exhaustive | vocab_tree
+  self_calibrate_intrinsics: true
+  min_track_len: 3
+
+spine:                    # S2 metric spine (GTSAM factor graph)
+  gnss_sigma_m: 2.5       # GPS horizontal std (m); tightened automatically when RTK present
+  gnss_sigma_v_m: 5.0     # vertical
+  use_imu: auto           # auto | on | off  (auto = use if present in telemetry)
+  use_baro: auto
+  align: umeyama          # similarity alignment of visual frame -> geographic CRS
+
+crs:                      # coordinate reference system
+  mode: derive_from_gps   # derive_from_gps | epsg   (NEVER hardcode a zone by default)
+  epsg: null              # only honored when mode == epsg; recorded as user-set in the manifest
+  vertical: ellipsoidal   # ellipsoidal | orthometric(geoid)  — geoid model applied if orthometric
+
+masking:                  # S3
+  detector: rt_detr
+  segmenter: sam2
+  tracker: bytetrack
+  motion: raft            # residual-motion check to catch un-labeled movers
+  detect_threshold: 0.4   # min detection score to treat an object as dynamic
+  dynamic_dilate_px: 8    # morphological margin grown around dynamic regions (px)
+  dynamic_classes: [person, car, truck, bus, bicycle, motorcycle, boat, animal]
+  semantic_classes: [ground, building, vegetation, water, vehicle, road]
+
+depth:                    # S4
+  model: depth_anything_v2_small   # relative depth; scale-aligned to the metric spine in S4
+  metric_refiner: metric3d_v2
+  input_long_side: 1024
+  min_metric_anchors: 8
+  geometry_window: 8
+  scale_align: sparse     # align monocular depth to metric spine using sparse points
+  feedforward_geometry:   # optional enhancement (MapAnything/Pi3) — pipeline succeeds without it
+    enabled: false
+    model: mapanything_apache
+    window: 8             # chunked window size to fit 16 GB
+
+dense:                    # S7
+  method: tsdf            # tsdf (Open3D) | gaussian (gsplat few-shot 3DGS)
+  tsdf_voxel_m: 0.05
+  depth_trunc_m: 100.0    # ignore depth beyond this (unreliable far field)
+  ground_band_margin_m: 12.0  # vertical margin on the sparse-point surface envelope for S7 Z-clip
+  min_local_surface_points: 3  # below this, keep the local depth envelope open instead of blanking a tile
+  max_vertical_slab_m: 10.0  # split wide depth envelopes, preserving surfaces instead of clipping them
+  gaussian:
+    iters: 7000
+    sh_degree: 2
+    regularize: [depth, normal, confidence]
+    max_gaussians: 2000000
+    view_batch: 1
+    checkpoint_every: 500
+  tile:
+    enabled: true         # tile large scenes to bound host RAM (per-tile TSDF volume, freed between tiles)
+    tile_m: 40.0          # smaller tile = lower peak RAM; combines with the Z-clip to bound per-tile blocks
+    overlap_m: 8.0
+
+mesh:                     # S8
+  method: poisson         # poisson (Open3D screened) | 2dgs | sugar
+  poisson_depth: 11
+  density_quantile: 0.03  # crop lowest-density Poisson vertices (thin/extrapolated surface)
+  normal_max_nn: 30       # neighbors used for normal estimation
+  mesh_voxel_m: 0.0       # meshing-input downsample voxel; 0.0=auto (match Poisson octree leaf, >=dense voxel). Bounds S8 RAM; dense.ply stays 5cm
+  consistent_normals_max_points: 5000000  # above this, use O(N) up-prior normals (aerial); tangent-plane MST OOMs on 100M-pt clouds
+  texture: mvs_texturing  # mvs_texturing | best_view
+  texture_atlas_size: 2048
+  texture_visibility_tolerance_m: 1.0
+  emit_confidence: true
+  flag_inferred: true     # mark completed/low-parallax geometry distinctly from measured
+
+geo:                      # S9
+  dsm_res_m: 0.10
+  dtm_res_m: 0.25
+  ortho_res_m: 0.05
+  dtm_ground_window_m: 3.0        # morphological ground-filter window (m)
+  ground_classifier: pdal_smrf   # run PDAL SMRF when available; otherwise report morphological fallback
+  pdal_smrf_slope: 0.15
+  pdal_smrf_threshold: 0.5
+  pdal_smrf_scalar: 1.25
+
+export:                   # S10
+  formats: [obj, ply, las, geotiff, gltf, fbx]   # MUST set; add laz, 3dtiles, potree as available
+  also: [laz, 3dtiles, potree]
+  fbx_via: blender_headless  # out-of-process (GPL isolation)
+  point_format: las_1_4
+
+report:                   # accuracy + confidence report
+  check_points: null      # path to held-out GPS/check points; if null, accuracy is reported "unvalidated"
+  format: [html, json]
+
+models:
+  cache_dir: models_cache
+  allow_download: false
+  allow_reference_only: false   # shipped path refuses non-permissive models unless explicitly overridden

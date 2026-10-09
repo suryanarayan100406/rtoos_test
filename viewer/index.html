@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DRISHTI — 3D model viewer</title>
+    <!--
+      Tell CesiumJS where its static assets live. These are copied to /cesium by
+      vite-plugin-static-copy (see vite.config.ts). Setting this before any module loads guarantees
+      Cesium never reaches for a CDN — the viewer stays fully offline-capable.
+    -->
+    <script>
+      window.CESIUM_BASE_URL = '/cesium'
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

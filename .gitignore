@@ -1,0 +1,48 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# --- Tooling ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node / viewer ---
+node_modules/
+viewer/dist/
+
+# --- DRISHTI runtime artifacts (never commit real outputs or datasets) ---
+runs/
+bundles/
+data/*
+!data/README.md
+*.mp4
+*.MP4
+*.srt
+*.SRT
+*.tlog
+*.bin
+models_cache/
+*.ply
+*.las
+*.laz
+*.obj
+*.glb
+*.gltf
+*.fbx
+*.tif
+*.tiff
+*.zip
+
+# --- OS ---
+.DS_Store
+Thumbs.db

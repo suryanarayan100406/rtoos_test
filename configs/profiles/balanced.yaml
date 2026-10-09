@@ -1,0 +1,18 @@
+# Balanced profile — the default operating point. Overrides default.yaml (mostly a no-op that
+# documents the balanced choices explicitly).
+ingest:
+  target_fps: 4
+poses:
+  use_glomap: true
+  matcher: sequential
+depth:
+  model: depth_anything_v2_small
+  input_long_side: 1024
+dense:
+  method: tsdf
+  tsdf_voxel_m: 0.05
+  gaussian:
+    max_gaussians: 1000000
+mesh:
+  method: poisson
+  poisson_depth: 11

@@ -1,0 +1,36 @@
+# Quality-biased profile — denser sampling, 3DGS, finer products. Slowest; needs the T4 for depth/dense.
+# Overrides default.yaml.
+ingest:
+  target_fps: 6
+frameqa:
+  keyframe:
+    method: parallax
+    min_parallax_px: 6.0
+poses:
+  use_glomap: true
+  matcher: exhaustive
+depth:
+  model: da3_base
+  metric_refiner: metric3d_v2
+  input_long_side: 1440
+  feedforward_geometry:
+    enabled: false       # optional Apache MapAnything cross-check; enable after hardware/aerial validation
+    window: 8
+dense:
+  method: gaussian
+  gaussian:
+    iters: 15000
+    sh_degree: 3
+    max_gaussians: 5000000
+    view_batch: 2
+  tile:
+    enabled: true
+    tile_m: 50.0
+mesh:
+  method: poisson
+  texture: best_view
+  texture_atlas_size: 8192
+geo:
+  dsm_res_m: 0.05
+  dtm_res_m: 0.15
+  ortho_res_m: 0.03

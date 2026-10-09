@@ -1,0 +1,38 @@
+# Example dataset descriptor — how you point DRISHTI at a REAL recording.
+# Copy this, set the real paths, and run:  drishti run --dataset configs/datasets/<name>.yaml
+#
+# DRISHTI does NOT ship a dataset. There are no bundled sample outputs. Supply a real clip +
+# telemetry; missing mandatory fields (video, gps) fail loudly (no placeholder substitution).
+
+name: example
+
+# --- Mandatory inputs ---
+video: data/example/flight.MP4          # 1080p/4K recorded single-pass clip
+telemetry:
+  format: dji_srt                        # dji_srt | csv | mavlink | exif
+  path: data/example/flight.SRT
+  # For CSV, map your columns (names or 0-based indices):
+  # csv:
+  #   time: timestamp        # seconds, or ISO-8601; auto-detected
+  #   lat: latitude
+  #   lon: longitude
+  #   alt: abs_alt
+  #   yaw: yaw               # optional
+  #   pitch: pitch           # optional
+  #   roll: roll             # optional
+
+# --- Optional inputs (used when present; never assumed) ---
+optional:
+  imu: null                # path to IMU log, or null
+  baro: null
+  intrinsics: null         # path to a camera-intrinsics yaml/json, or null (self-calibrated otherwise)
+  rtk: null                # path to RTK/PPK corrected track, or null
+
+# --- CRS hint (default derives from the GPS track; only set epsg to override) ---
+crs:
+  mode: derive_from_gps
+  epsg: null
+
+# --- Optional: held-out check points for accuracy validation (GeoJSON/CSV of surveyed points) ---
+report:
+  check_points: null       # null => accuracy reported as "unvalidated" (never fabricated)

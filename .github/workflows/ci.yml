@@ -1,0 +1,66 @@
+# DRISHTI continuous integration.
+#
+# Scope: the CORE pipeline machinery + API server. The heavy, environment-specific extras
+# (geo → GDAL/PROJ, recon → Open3D, depth → torch/OpenVINO, poses → COLMAP/GLOMAP) need system
+# libraries or a GPU and are validated on the cloud-T4 tier / in the Docker images, not here. The
+# core is deliberately import-safe without them (guarded imports fail loudly at run time, never fake),
+# so lint + the full unit suite run green on a plain runner.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install (core + dev + server)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,server]"
+
+      - name: Ruff (lint)
+        run: ruff check src tests server
+
+      - name: Pytest
+        run: pytest -q
+
+  build-viewer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build the web viewer
+        working-directory: viewer
+        # Only runs when a lockfile is present; keeps CI green before the first `npm install`.
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+            npm run build
+          else
+            echo "viewer/package-lock.json not present yet — skipping viewer build"
+          fi
