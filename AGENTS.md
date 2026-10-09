@@ -310,7 +310,15 @@ the full beginner path: source/GPU setup, every notebook section, sample or pers
 selection, exact resume limitations, archive recovery, and local viewing. Instructions were checked
 against the notebook/CLI; fresh native/cloud end-to-end validation remains the next engineering proof.
 
-**Now / Next:** The first real `aukerman` full run produced a **fragmented/floating-block mesh** — root-caused
+**Now / Next:** The user's hosted `waterbury` run `colab-full-20261009-174336` completed S0 (6.4 s)
+but failed S1 on a mismatched strict zip in GNSS-track coverage. Corrected S1 to pair the two equal-length
+adjacent-frame slices and added stage-level regression coverage. Resume that existing bundle after
+patching its checkout, or commit/push the corrected source and reimport the updated full notebook.
+The notebook now prefers Kaggle's writable root over `/content`, checks for the old S1 source bug,
+installs texture/export extras, supports direct bundle/ZIP recovery, and preserves retry logs.
+S2 onward is untested in this attempt. Historical run/fix context follows.
+
+The first real `aukerman` full run produced a **fragmented/floating-block mesh** — root-caused
 to **two independent run-config bugs** (sequential matcher → pose drift; `depth_trunc` clipped below the
 ~100 m flying height → ground deleted) and fixed in the Colab notebook §6 (see §9, 2026-09-10). Bug #1 is
 measured-proven (RMSE 26.3→6.5 m). The corrected **6B block** (exhaustive + `depth_trunc=150`, 5 cm voxel)
@@ -391,6 +399,32 @@ list of what's done vs. remaining directly under this table.
 ---
 
 ## 9. Decision log (append-only)
+
+- **2026-10-09 — commit/reimport-ready full notebook after the S1 failure.** Set the editable source
+  URL to the user's `suryanarayan100406/rtoos_test` repository, with a setup check rejecting the known
+  old S1 expression before dataset/model work. Centralized host detection: `/kaggle/working` takes
+  precedence over `/content` for source, Python environment, and Blender; upload/download widgets use
+  the same host flags. The installer now includes `texture` and `export`, stops on environment-creation
+  failure, checks CUDA through its selected Python, and probes real imports. Option C accepts an
+  existing writable bundle or a full ZIP and an explicit input working directory, validating source
+  input presence before resume. Both run blocks use the selected interpreter and append timestamped
+  console attempts. Updated the beginner guide; the committed S1 fix replaces the need for an ad-hoc
+  hosted patch. Added notebook regressions for mixed host paths, directory/ZIP restore, fresh/resume
+  commands, log preservation, and Option E descriptor validation. **30 focused tests pass**; Ruff is
+  clean for the changed Python source/tests, and the notebook JSON/cell syntax is valid with no saved
+  execution output. Cloud E2E validation remains pending.
+
+- **2026-10-09 — S1 adjacent-frame coverage crash in the hosted Waterbury run.** User-provided logs
+  for `colab-full-20261009-174336` (T4, 31.3 GB host RAM, checkout `a79dfa3`) show S0 completing in
+  6.4 s and S1 failing after 55.7 s in the coverage sum. `zip(accepted, accepted[1:], strict=True)`
+  pairs lengths n and n−1 and fails for every nonempty accepted list, including a singleton.
+  Changed it to `zip(accepted[:-1], accepted[1:], strict=True)` so all n−1 adjacent segments are used.
+  Added stage-level tests for both fixed-stride/parallax selectors, unequal GPS segment lengths,
+  singleton/stationary tracks, missing GPS/gaps, and QA-rejected frames, using mocked I/O/native ORB
+  boundaries only within tests. The first regression reproduced the exact logged error before the fix.
+  Added an idempotent source-patch cell and existing-bundle resume procedure to the Kaggle guide.
+  Validation: **20 focused frame-QA tests passed**, and Ruff is clean for the changed source/test.
+  No quality thresholds or run configuration changed; the hosted resume remains pending.
 
 - **2026-10-09 — complete beginner Kaggle operator guide.** Added
   `notebooks/KAGGLE-GUIDE.md` and linked it from the repository, notebook, and documentation entry

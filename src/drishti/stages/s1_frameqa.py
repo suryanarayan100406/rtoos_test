@@ -118,10 +118,10 @@ class FrameQAStage(Stage):
 
         # Persist measured geometry/coverage evidence for every candidate. Geometry is the actual ORB
         # displacement used by the selector; coverage is cumulative GNSS-track progress, not a proxy
-        # generated from the frame index.
+        # generated from the frame index. Pair equal-length slices for the n-1 adjacent segments.
         total_track = sum(
             haversine_m(float(a["lat"]), float(a["lon"]), float(b["lat"]), float(b["lon"]))
-            for a, b in zip(accepted, accepted[1:], strict=True)
+            for a, b in zip(accepted[:-1], accepted[1:], strict=True)
             if None not in (a.get("lat"), a.get("lon"), b.get("lat"), b.get("lon"))
         )
         cumulative = 0.0

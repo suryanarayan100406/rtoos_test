@@ -27,9 +27,10 @@ It covers the full **import → run → export** loop: generate a realistic data
 own via Drive/upload, or resume a partial local bundle), run all stages with verbose logs tee'd into the
 bundle, then `inspect`/`verify` and download the whole thing (full or slim archive).
 
-It explicitly installs **`transformers`** (S3/S4 model loading) and **`laspy`** (LAS export), which the
-current package also declares in the `depth` and `export` extras. Add the `texture` extra for xatlas
-UV baking as explained in the [Kaggle guide](KAGGLE-GUIDE.md). Optional portable **Blender 4.2** enables
+It installs **`transformers`** (S3/S4 model loading), **`laspy`** (LAS export), and xatlas UV baking
+through the `depth`, `export`, and `texture` extras. Kaggle host paths take precedence over `/content`;
+Option C accepts a bundle directory or full ZIP on either host, and run retries preserve console logs.
+See the [Kaggle guide](KAGGLE-GUIDE.md). Optional portable **Blender 4.2** enables
 the **FBX** output. It runs the **`balanced`** profile. The `max` profile selects the CUDA/gsplat + Apache
 DA3 path and requires a larger CUDA runtime, so this notebook keeps `balanced` as the reproducible T4
 workflow.

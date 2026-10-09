@@ -17,6 +17,12 @@ run the reconstruction on Kaggle.
 fresh full run on the current checkout has passed on Kaggle. See the
 [audited build status](../docs/BUILD-STATUS-AND-USAGE.md) for remaining validation.
 
+**Updating after the S1 crash:** commit and push the corrected source **and** notebook, then reimport
+the notebook. The default repository is `suryanarayan100406/rtoos_test` on `main`; change it for a fork.
+Section 1 prints the fetched commit and stops early if it still contains the known S1 coverage bug.
+With the corrected checkout, no manual patch cell is needed. Fresh Kaggle runs now use
+`/kaggle/working/drishti`, even if `/content` also exists.
+
 ## Contents
 
 1. [What you need and what you will get](#1-what-you-need-and-what-you-will-get)
@@ -134,7 +140,9 @@ os.environ["DRISHTI__models__allow_download"] = "true"
 ```
 
 The local default is offline. This explicit permission lets the hosted run fetch registered model
-checkpoints. Re-run this cell after restarting the kernel.
+checkpoints. The same notebook cell also sets `ON_KAGGLE`, `ON_COLAB`, and `HOST_ROOT`, preferring
+`/kaggle/working` over `/content` when both exist. Run the **whole cell**, including host selection,
+after restarting the kernel; the excerpt above only shows the checkpoint permission.
 
 ### Section 0 — confirm the GPU
 
@@ -229,17 +237,18 @@ Run the full install cell and let it finish. It:
    Open3D wheel compatibility expected by this notebook.
 3. Installs the core CLI and each heavy capability group separately.
 4. Installs/checks PyTorch, the neural-model packages, point-cloud export support, and Pillow.
-5. Prints an `OK`/`MISSING` module table.
+5. Checks CUDA in the selected Python and actually imports modules, printing `OK` or
+   `MISSING/BROKEN` with the import error.
 
 Hosted Python versions and package wheels change. The cell's actual output is the source of truth.
 An optional install failure can leave the cell running to completion with missing capabilities;
 **a finished install cell is not proof that every dependency installed**.
 
-The notebook explicitly installs Transformers and laspy; the current `pyproject.toml` also declares
-them in the `depth` and `export` extras, respectively.
+The notebook installs Transformers through the `depth` extra and laspy through `export`.
 
-**For UV-textured mesh output**, add and run this cell immediately after installation. The main
-install cell currently does not include the `texture` extra:
+**UV-textured mesh support is now included:** section 2 installs the `texture` extra for xatlas and
+Pillow. You do not need an additional install cell on a successful setup. If that group failed,
+address the printed cause and retry it explicitly with:
 
 ```python
 pipi("-e", ".[texture,export]", required=True)
@@ -421,8 +430,10 @@ the printed error before starting reconstruction. Skip the other input cells.
   set `MISSION = "/kaggle/input/your-dataset/mission.yaml"` and `RESUME_BUNDLE = None`. Use absolute
   paths for its media; relative paths resolve from the process working directory, not the YAML's
   parent directory.
-- The built-in Option C uses `google.colab.files` and is **Colab-specific**. Kaggle users should use
-  [the restore/resume instructions below](#9-resume-after-interruption).
+- Built-in **Option C** supports both hosts. Set `RUN_OPTION_C = True` and `BUNDLE_SOURCE` to a
+  writable bundle directory or a full ZIP. Set `INPUT_ROOT` if the recorded relative source files
+  live outside `REPO_DIR`. Colab also offers an upload picker when no path is supplied; Kaggle needs
+  an explicit path. See [restore/resume below](#9-resume-after-interruption).
 
 ## 6. Run the reconstruction: notebook section 6
 
@@ -563,6 +574,18 @@ Run the export/archive cell. It creates **both** ZIPs beside the bundle, normall
 Use the exact paths printed by the cell; archives are under `drishti/runs`, not necessarily directly
 under `/kaggle/working`. Refresh the Kaggle file/output browser, navigate to them, and download.
 
+If you resumed a legacy bundle still under `/content`, its ZIPs are created there too. After section 9,
+copy those ZIPs into Kaggle's output area to expose them in its file browser:
+
+```python
+# Only needed for a legacy /content bundle resumed on Kaggle.
+if ON_KAGGLE:
+    for archive_path in (full_zip, slim_zip):
+        source = Path(archive_path)
+        if HOST_ROOT not in source.resolve().parents:
+            shutil.copy2(source, HOST_ROOT / source.name)
+```
+
 | Archive | Includes | Use |
 |---|---|---|
 | **Full** | The whole run directory: manifest, all existing stage artifacts, logs, and report. | Integrity verification, inspecting intermediates, continuing a partial run. |
@@ -599,8 +622,8 @@ overwrite your input selection.
 ### Same session, same settings
 
 First resolve the error, for example a failed dependency install, and keep all original inputs
-available. Before rerunning 6B, preserve its existing log: the run cell opens `run_console.log` in
-write mode on each attempt.
+available. The updated 6A/6B cells **append timestamped attempts** to `run_console.log`; previous
+attempts are retained. This backup step is still useful with older notebooks that overwrite the log:
 
 ```python
 import shutil
@@ -630,7 +653,11 @@ resuming a 6A bundle in 6B retains the old 40 m depth limit. To use different se
 1. Restore source/setup using the same project version; run the initial permission cell and sections
    0–4 again. Environments and notebook variables may have disappeared.
 2. Attach your **full** bundle archive and original mission files as Kaggle inputs.
-3. Extract the archive into a writable directory with this new cell, editing the ZIP path:
+3. Use built-in Option C: set `RUN_OPTION_C = True`, `BUNDLE_SOURCE` to the full ZIP path, and
+   `INPUT_ROOT` to the directory containing the recorded relative inputs (blank means `REPO_DIR`).
+   It extracts the archive into a unique writable `drishti-restored-…` directory, checks for one
+   manifest and the original video/telemetry, and sets `BUNDLE`/`RESUME_BUNDLE`. Run 6B afterward.
+   **Alternatively**, perform the restore manually with the following cells, editing the ZIP path:
 
 ```python
 from pathlib import Path
@@ -785,6 +812,7 @@ original inputs and heavy libraries.
 | Checkpoint download/offline-cache error | Run the initial `allow_download` cell, enable Internet, and check the actual model URL/cache error. |
 | Option E asks for an uploader on Kaggle | Replace `"upload"` with real `/kaggle/input/...` file paths. |
 | CSV/SRT cannot be parsed, or no GPS records | Confirm the format and column names and that the log contains real positions/altitudes. Plain subtitles are not GPS telemetry. |
+| S1 fails with `zip() argument 2 is shorter than argument 1` | An older S1 source snapshot has a mismatched adjacent-frame pair calculation. Apply the targeted fix below, then resume the existing bundle. |
 | Too few keyframes or unregistered views | Review sharpness, exposure, overlap, telemetry alignment, and S1/S2 logs. A larger GPU cannot recover missing visual overlap. |
 | `[exit -9]` or `137` | The process was killed; host-RAM exhaustion is a common cause but not the only one. Identify the last stage and inspect resource usage. See below. |
 | `CUDA out of memory` | GPU memory exhaustion differs from host RAM. Identify the neural stage, free competing GPU processes, and use appropriate fresh-run model/resolution settings. |
@@ -796,6 +824,46 @@ original inputs and heavy libraries.
 | `verify` reports missing files | Use the full archive, not slim. On a full bundle, check extraction/download completeness before trusting it. |
 | Viewer lists no runs | Check the directory nesting and `/api/health`'s `runs_dir`; start the API at the repository root. |
 | Viewer shows status but no 3D model | Check the `3dtiles` export result. Open a successful GLB/OBJ/PLY in a desktop viewer. |
+
+### S1 adjacent-frame coverage error in an older checkout
+
+A Waterbury hosted run on 2026-10-09 reached S1 and failed while summing the accepted frames' GPS
+track length. The old expression paired all `n` frames with the last `n-1` frames using strict zip,
+which always raises for nonempty input. The corrected expression pairs `accepted[:-1]` with
+`accepted[1:]`, both of length `n-1`. This is a code fix; changing QA thresholds will not fix it.
+
+The current source already contains the correction. After committing/pushing it and reimporting the
+updated notebook, run the normal setup; the patch below is only for an older, still-running checkout.
+
+If your running session has that exact traceback in `s1_frameqa.py`, apply this cell without
+re-cloning, reinstalling, or downloading the dataset again:
+
+```python
+import shutil
+from pathlib import Path
+
+source_file = Path(REPO_DIR) / "src/drishti/stages/s1_frameqa.py"
+old = "zip(accepted, accepted[1:], strict=True)"
+new = "zip(accepted[:-1], accepted[1:], strict=True)"
+source = source_file.read_text(encoding="utf-8")
+if old in source:
+    assert source.count(old) == 1, "Unexpected source; inspect before patching"
+    patched = source.replace(old, new)
+    compile(patched, str(source_file), "exec")
+    shutil.copy2(source_file, source_file.with_suffix(".py.before_s1_fix"))
+    source_file.write_text(patched, encoding="utf-8")
+    print("Fixed S1 adjacent-frame coverage:", source_file)
+elif new in source:
+    print("S1 fix is already present:", source_file)
+else:
+    raise RuntimeError("Source differs from this patch; inspect the actual traceback/source")
+```
+
+Then follow [same-session resume](#same-session-same-settings): preserve the previous console log,
+set `RESUME_BUNDLE = BUNDLE`, and rerun **6B**. The editable installation uses the patched source in
+the newly launched process. With the original inputs unchanged, S0 is skipped and S1 restarts.
+The clone/reset cell would discard this local patch; carry the correction into the source repository
+used for future sessions as well.
 
 ### Memory failures: identify the stage before changing settings
 
@@ -824,6 +892,8 @@ For a different dataset in the same session:
 
 1. Preserve/download the previous bundle.
 2. Run the chosen input cell with new files or a new dataset name.
+   If Option C selected a different input working directory, first run `os.chdir(REPO_DIR)` before
+   generating a new sample with Option D.
 3. Ensure `RESUME_BUNDLE = None` and `MISSION` points at the new descriptor.
 4. Review environment overrides before starting 6B. Option E's ingest overrides remain in the
    kernel session and can affect a later Option D run. To restore ingest defaults:

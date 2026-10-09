@@ -67,9 +67,8 @@ Run **§2 · Install**. You don't have to edit anything — just run the cell. I
   and puts it first on `PATH` — every later `!drishti` / `!python` transparently uses it. This is what
   makes a genuinely **full** run (Open3D and all) possible on current runtimes. Expect it to take a few
   minutes the first time (it downloads a Python plus CUDA PyTorch).
-- It explicitly installs **`transformers`** (S3/S4 model loading) and **`laspy`** (LAS exports). The
-  current `depth` and `export` extras also declare these. For xatlas UV baking, run
-  `pipi("-e", ".[texture,export]", required=True)` after the main install cell.
+- It installs **`transformers`**, **`laspy`**, and xatlas UV baking through the `depth`, `export`, and
+  `texture` extras. The final probe imports the modules and reports any broken native imports.
 
 The cell finishes with a capability probe printing `OK` / `MISSING` per module — that's your first honest
 look at what's installed; §4 `doctor` then gates each stage on the same imports.
@@ -114,8 +113,10 @@ GPS/telemetry track; IMU/baro/intrinsics/RTK are optional). Pick **one**:
 - **Option C — resume a partial bundle** you started locally (e.g. S0/S1 ran, then S2 failed for lack of
   GPU deps). Set `RUN_OPTION_C = True`. **Important:** the runner re-checks S0's inputs, so the original
   video + telemetry must exist at the paths the descriptor names — regenerate them (if they came from
-  `make_sample_dataset.py`, same paths) or upload/mount your originals **before** resuming. The Option-C
-  upload widget is Colab-only; use the [Kaggle restore procedure](KAGGLE-GUIDE.md#9-resume-after-interruption) there.
+  `make_sample_dataset.py`, same paths) or upload/mount your originals **before** resuming. Set
+  `BUNDLE_SOURCE` to a writable bundle directory or full ZIP and `INPUT_ROOT` if relative inputs live
+  outside `REPO_DIR`. The upload widget is Colab-only; explicit paths work on both hosts. See
+  [the restore procedure](KAGGLE-GUIDE.md#9-resume-after-interruption).
 
 ## Step 6 — Run the whole pipeline
 
@@ -131,7 +132,8 @@ Apache-2.0).
   stopped.
 
 Resume uses the saved settings and accepts **no `--set` overrides**. Start a fresh run for changed
-settings. Back up `logs/run_console.log` before rerunning the cell, which overwrites that log.
+settings. The updated run cells append timestamped attempts to `logs/run_console.log`; older notebook
+versions overwrite it, so back it up if using one of those.
 To include GLB as well as the default glTF, request it before a fresh run as shown in the
 [Kaggle guide](KAGGLE-GUIDE.md#include-a-convenient-glb-deliverable).
 
