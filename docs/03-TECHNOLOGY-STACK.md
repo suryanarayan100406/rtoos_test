@@ -136,7 +136,7 @@ Each table: **Role · Adopted (default build) · Version/commit · License · Wh
 | Role | Adopted (default) | Version | License | Why (single-pass) | Alternatives |
 |------|-------------------|---------|---------|-------------------|--------------|
 | Edge TSDF fusion | NVIDIA **nvblox** | 0.x (Isaac) | Apache-2.0 ✓ | GPU-accelerated Truncated Signed Distance Function (TSDF) on Jetson → live coarse map, dynamic-masked | Voxblox, VDBFusion |
-| Ground TSDF / point fusion | **Open3D** | 0.18 | MIT ✓ | Scalable TSDF + point-cloud tooling on the ground tier | VDBFusion, custom CUDA |
+| Ground TSDF / point fusion | **Open3D** | **0.19.0** | MIT ✓ | Scalable TSDF + point-cloud tooling on the ground tier; pinned because the shipped legacy TSDF path is not compatible with 0.20 | VDBFusion, custom CUDA |
 
 ### (g) Dense reconstruction — few-shot 3D Gaussian Splatting (3DGS)
 

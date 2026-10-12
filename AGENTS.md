@@ -283,7 +283,8 @@ and exit criteria: [`docs/implementation/01-IMPLEMENTATION-PLAN.md`](docs/implem
 
 **What "in progress" means here (honest):** the *code* for all 11 stages (S0–S10 + report) is written
 with real tools and guarded imports — **no stubs, no fake outputs**. The pure logic and core machinery
-are unit-tested (**146 tests passing, ruff clean**; the suite includes the FastAPI server tests). What remains is
+are unit-tested (**170 tests passing, 2 optional tests skipped, ruff clean** in the current validation
+environment; the suite includes the FastAPI server tests). What remains is
 **end-to-end validation on real
 footage with the heavy extras installed**, which needs the cloud-T4 / Docker environment (no local
 dGPU on the dev machine). Until a full run over real drone video is measured, these phases are not
@@ -320,6 +321,17 @@ run's all-empty result still needs hosted confirmation, so `fuse_tsdf_tiled` now
 camera-center tiler when adaptive completes with zero emitted points. Push/reimport this source, restore
 the full archive through notebook Option C, and resume S7 with the same 6B settings; S8–report remain
 unvalidated on Waterbury.
+
+The next hosted `aukerman` run (`colab-full-20261012-032012`) completed S0–S4 and reached S7, but
+both adaptive and legacy TSDF attempts extracted zero points across all tiles. The recovered archive
+contains 74 metric depth maps and valid clipped pixels; a native reproduction found **48,193 valid
+pixels** in an exact adaptive tile/slab, so the failure was not missing S4 depth or adaptive core-cropping.
+The decisive reproduction was an Open3D version difference: the hosted Open3D 0.20.0 legacy
+`ScalableTSDFVolume` emitted zero points even for a synthetic valid depth plane, while Open3D 0.19.0
+extracted the archived Aukerman surface (560,806 points at a probe voxel). The shipped `recon` extra is
+now pinned to **`open3d==0.19.0`**; TSDF tiles are also integrated in a nearby local metric frame and
+translated back to the mission CRS before cropping/output. S7–report still need a fresh hosted resume;
+the failed archive must not be resumed with the 0.20 environment.
 
 The first real `aukerman` full run produced a **fragmented/floating-block mesh** — root-caused
 to **two independent run-config bugs** (sequential matcher → pose drift; `depth_trunc` clipped below the
@@ -402,6 +414,20 @@ list of what's done vs. remaining directly under this table.
 ---
 
 ## 9. Decision log (append-only)
+
+- **2026-10-12 — Aukerman S7 zero extraction root-caused to Open3D 0.20 and fixed in the shipped path.**
+  The recovered `output/colab-full-20261012-032012_full.zip` is ZIP-valid and contains all S0–S6 inputs
+  plus `s7_dense/tile_states.json`. Adaptive fusion recorded 108 tiles with **0 extracted / 0 emitted**;
+  the legacy fallback recorded 32 tiles with the same result. This was not the Waterbury adaptive
+  core-crop symptom: the archived Aukerman frame `000043.jpg` had 48,193 pixels surviving the exact
+  tile/slab XY+Z clip. Native reproduction isolated the environment: Open3D 0.20.0's legacy
+  `ScalableTSDFVolume` returned an empty cloud for both that real clipped depth and a valid synthetic
+  plane, including after UTM recentering; Open3D 0.19.0 extracted the real clipped frame successfully
+  (560,806 points at a 0.2 m probe voxel). Changed `pyproject.toml` and `uv.lock` from `open3d>=0.18`
+  to `open3d==0.19.0`, documented the compatibility pin, and added local-frame TSDF integration in
+  both adaptive and legacy paths so Open3D never receives million-scale CRS translations. Added large
+  CRS recenter/restore regressions. Validation: **170 tests passed, 2 optional tests skipped, Ruff and
+  mypy clean**; a fresh cloud resume with pinned Open3D remains pending.
 
 - **2026-10-10 — Waterbury adaptive S7 empty-cloud failure and fail-safe fallback.** The hosted run
   `colab-full-20261010-060659` (EPSG:32618, 216-frame Waterbury input) completed S0–S4, then spent

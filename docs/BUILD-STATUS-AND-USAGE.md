@@ -42,7 +42,7 @@ native/cloud proof?”
 ### Not yet proven as a complete product run
 
 - S2–S10 over a fresh real `aukerman` or `waterbury` bundle on the current code revision.
-- DA3, MapAnything, gsplat, Open3D, pycolmap, GLOMAP, PDAL, Blender, and all export tools together in one
+- DA3, MapAnything, gsplat, **Open3D 0.19.0**, pycolmap, GLOMAP, PDAL, Blender, and all export tools together in one
   native environment.
 - ≤1 m accuracy. This is an acceptance target, not a current measured result.
 - The official `<15 min for a 10-minute video` target. Runtime must be reported for the actual hardware.

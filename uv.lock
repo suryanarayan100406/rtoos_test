@@ -687,7 +687,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.9" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "onnx", marker = "extra == 'depth'", specifier = ">=1.15" },
-    { name = "open3d", marker = "extra == 'recon'", specifier = ">=0.18" },
+    { name = "open3d", marker = "extra == 'recon'", specifier = "==0.19.0" },
     { name = "opencv-python-headless", marker = "extra == 'video'", specifier = ">=4.9" },
     { name = "openvino", marker = "extra == 'depth'", specifier = ">=2024.0" },
     { name = "piexif", marker = "extra == 'telem'", specifier = ">=1.1" },

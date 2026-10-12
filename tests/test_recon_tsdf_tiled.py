@@ -481,6 +481,69 @@ def test_tiled_fusion_sink_streams_tiles_and_returns_empty(monkeypatch):
     assert sum(len(c) for c in chunks_cols) == 25
 
 
+def test_tiled_fusion_recenters_large_crs_before_native_integration(monkeypatch):
+    """TSDF receives local coordinates but emits points back in the mission CRS.
+
+    Open3D 0.20 can extract an empty cloud when UTM-scale translations are passed directly to its legacy
+    volume. The guard volume models that native contract by rejecting large camera centers; a successful
+    result proves the tile was recentered and then restored before core cropping.
+    """
+    from drishti.recon.tsdf import fuse_tsdf_tiled
+
+    _install_fake_open3d(monkeypatch)
+
+    class _LocalOnlyVolume(_FakeVolume):
+        def integrate(self, rgbd, intr, extr):
+            R = np.asarray(extr)[:3, :3]
+            t = np.asarray(extr)[:3, 3]
+            c = -R.T @ t
+            assert np.linalg.norm(c) < 1_000.0
+            self._cams.append(c)
+
+    sys.modules["open3d"].pipelines.integration.ScalableTSDFVolume = _LocalOnlyVolume
+    center = (437000.0, 4572000.0)
+    spec = _spec(*center)
+    points, _, used = fuse_tsdf_tiled(
+        [spec], _load, fx=1.0, fy=1.0, cx=2.0, cy=2.0, width=4, height=4,
+        voxel_m=0.05, sdf_trunc=0.2, depth_trunc=150.0, tile_m=30.0, overlap_m=8.0,
+    )
+
+    assert used == 1
+    assert len(points) == 1
+    np.testing.assert_allclose(points[0], [*center, 10.0])
+
+
+def test_adaptive_fusion_recenters_large_crs_before_native_integration(monkeypatch):
+    """The metric-footprint backend applies the same local-frame contract as legacy tiling."""
+    from drishti.recon.adaptive import fuse_metric_tiles
+
+    _install_fake_open3d(monkeypatch)
+
+    class _LocalOnlyVolume(_FakeVolume):
+        def integrate(self, rgbd, intr, extr):
+            R = np.asarray(extr)[:3, :3]
+            t = np.asarray(extr)[:3, 3]
+            c = -R.T @ t
+            assert np.linalg.norm(c) < 1_000.0
+            self._cams.append(c + np.array([0.0, 0.0, -1.0]))
+
+    sys.modules["open3d"].pipelines.integration.ScalableTSDFVolume = _LocalOnlyVolume
+    center = (437000.0, 4572000.0)
+    spec = _spec(*center)
+    spec["extr"] = _nadir_extr(center[0], center[1], 10.0)
+    spec["footprint_xy"] = [center[0] - 2.0, center[1] - 2.0, center[0] + 2.0, center[1] + 2.0]
+    points, _, used = fuse_metric_tiles(
+        [spec], _load, fx=100.0, fy=100.0, cx=2.0, cy=2.0, width=4, height=4,
+        voxel_m=0.05, sdf_trunc=0.2, depth_trunc=150.0, tile_m=10.0, overlap_m=1.0,
+        surface_points=None, z_margin_m=0.0, min_local_surface_points=3,
+        sink=None, tile_observer=None, max_vertical_slab_m=10.0,
+    )
+
+    assert used == 1
+    assert len(points) == 1
+    np.testing.assert_allclose(points[0], [center[0], center[1], 9.0])
+
+
 def test_tile_plan_opens_z_band_when_sparse_support_is_missing():
     """Sparse coverage gaps must not be converted into a silent blank tile."""
     from drishti.recon.tsdf import build_tile_plans

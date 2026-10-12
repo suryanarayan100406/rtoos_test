@@ -91,7 +91,7 @@ pip install -e .                                    # core only (CLI works; heav
 | `video` | `av`, `opencv-python-headless` | S0 ingest, S1 frame-QA, S3/S4 mask & depth I/O |
 | `poses` | `pycolmap` | S2 poses (SfM) |
 | `geo` | `pyproj`, `rasterio`, `shapely` | S2 CRS projection, S9 GeoTIFF rasters, report validation |
-| `recon` | `open3d`, `trimesh`, `pygltflib` | S7 dense, S8 mesh, S10 export |
+| `recon` | `open3d==0.19.0`, `trimesh`, `pygltflib` | S7 dense, S8 mesh, S10 export |
 | `depth` | `torch`, `openvino`, `onnx` | S3 masking, S4 metric depth |
 | `telem` | `pymavlink`, `piexif` | MAVLink/CSV telemetry parsing |
 | `spine` | `gtsam` | optional S2 tightening (*not yet wired* — see §18) |
@@ -111,7 +111,8 @@ pip install -e ".[video,geo,recon,poses,spine,telem,depth,server]"
 ```
 
 > **On Colab/Kaggle, prefer the notebooks over this raw command.** Their current runtime is **Python
-> 3.13**, for which **Open3D has no wheel** (it caps at cp312) — so `.[recon]` makes this atomic install
+> 3.13**, for which **Open3D has no wheel** (it caps at cp312) — and the shipped `.[recon]` path pins
+> **Open3D 0.19.0** because the hosted 0.20.0 legacy TSDF path can extract an empty cloud — so this atomic install
 > abort, taking the `drishti` CLI down with it. `notebooks/drishti_colab_full.ipynb` (and the tier-split
 > `drishti_cloud_t4.ipynb`) handle this: they install each group in isolation and, on a >3.12 kernel,
 > auto-build a Python 3.12 env with `uv`. They also add `transformers` and `laspy`, which no extra lists

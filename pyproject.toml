@@ -27,7 +27,7 @@ dependencies = [
 # never required for the core pipeline machinery. See docs/implementation/02-SYSTEM-DESIGN.md.
 video   = ["av>=11.0", "opencv-python-headless>=4.9"]
 geo     = ["pyproj>=3.6", "rasterio>=1.3", "shapely>=2.0"]        # + GDAL/PDAL via system pkgs
-recon   = ["open3d>=0.18", "trimesh>=4.0", "pygltflib>=1.16"]
+recon   = ["open3d==0.19.0", "trimesh>=4.0", "pygltflib>=1.16"]
 texture = ["xatlas==0.0.11", "pillow>=10", "trimesh>=4.0", "scipy>=1.11"]
 poses   = ["pycolmap>=0.6"]                                        # GLOMAP via system binary
 spine   = ["gtsam>=4.2"]

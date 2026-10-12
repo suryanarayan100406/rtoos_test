@@ -35,6 +35,7 @@ import numpy as np
 
 from ..logging import get_logger
 from ..runtime.deps import require
+from .camera import recenter_extrinsic
 
 log = get_logger("drishti.recon.tsdf")
 
@@ -45,6 +46,37 @@ def _make_volume(o3d, voxel_m: float, sdf_trunc: float):
         sdf_trunc=float(sdf_trunc),
         color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
     )
+
+
+def _camera_center(extr: np.ndarray) -> np.ndarray:
+    """Recover the world-frame camera center from a world-to-camera extrinsic."""
+    matrix = np.asarray(extr, dtype=np.float64)
+    return -matrix[:3, :3].T @ matrix[:3, 3]
+
+
+def tile_origin_from_specs(
+    frame_specs: Sequence[dict], selected: Sequence[int] | np.ndarray,
+) -> np.ndarray:
+    """Choose a local metric origin for one TSDF tile.
+
+    Open3D's legacy TSDF implementation uses floating-point voxel/block arithmetic internally. Feeding it
+    UTM northings/eastings in the millions can make a valid depth surface disappear during extraction
+    (notably with Open3D 0.20). Each tile is therefore integrated in a nearby local frame, while the
+    caller adds this origin back to extracted points before CRS cropping/output. The median selected
+    camera center keeps both the translation and the reconstructed surface close to zero without
+    changing any camera ray or metric distance.
+    """
+    centers = []
+    for index in selected:
+        extr = frame_specs[int(index)].get("extr")
+        if extr is None:
+            continue
+        center = _camera_center(extr)
+        if np.isfinite(center).all():
+            centers.append(center)
+    if not centers:
+        return np.zeros(3, dtype=np.float64)
+    return np.median(np.asarray(centers, dtype=np.float64), axis=0)
 
 
 def _integrate(o3d, vol, intr, color_bgr: np.ndarray, depth: np.ndarray,
@@ -250,15 +282,22 @@ def fuse_tsdf(
     intr = o3d.camera.PinholeCameraIntrinsic(int(width), int(height), fx, fy, cx, cy)
     vol = _make_volume(o3d, voxel_m, sdf_trunc)
     used = 0
+    origin = None
     for color_bgr, depth, extr in frames:
         if depth is None or color_bgr is None:
             continue
-        _integrate(o3d, vol, intr, color_bgr, depth, extr, depth_trunc)
+        if origin is None:
+            origin = _camera_center(extr)
+        _integrate(o3d, vol, intr, color_bgr, depth,
+                   recenter_extrinsic(extr, origin), depth_trunc)
         used += 1
     if used == 0:
         raise RuntimeError("TSDF fusion integrated 0 frames (no valid depth).")
     pcd = vol.extract_point_cloud()
-    return np.asarray(pcd.points), np.asarray(pcd.colors), used
+    points = np.asarray(pcd.points, dtype=np.float64).copy()
+    if origin is not None and len(points):
+        points += origin
+    return points, np.asarray(pcd.colors), used
 
 
 def fuse_tsdf_tiled(
@@ -303,6 +342,8 @@ def fuse_tsdf_tiled(
     count of distinct frames integrated into at least one tile. ``points``/``colors`` are empty when a
     ``sink`` consumed the tiles.
     """
+    observe_legacy: Callable[[dict], None] | None
+    legacy_frame_specs: Sequence[dict]
     if any(spec.get("footprint_xy") is not None for spec in frame_specs):
         from .adaptive import fuse_metric_tiles
 
@@ -406,6 +447,7 @@ def fuse_tsdf_tiled(
             log.info("  tile [%d,%d] integrating %d candidate frames (z=%s)...", ix, iy,
                      len(sel), plan["z_source"])
             vol = _make_volume(o3d, voxel_m, sdf_trunc)
+            origin = tile_origin_from_specs(legacy_frame_specs, sel)
             n_here = 0
             for i in sel:
                 loaded = load(frame_specs[int(i)])
@@ -420,7 +462,8 @@ def fuse_tsdf_tiled(
                 )
                 if not np.any(depth_clipped > 0):
                     continue  # this frame sees no ground inside the tile window
-                _integrate(o3d, vol, intr, color_bgr, depth_clipped, extr, depth_trunc)
+                _integrate(o3d, vol, intr, color_bgr, depth_clipped,
+                           recenter_extrinsic(extr, origin), depth_trunc)
                 used_idx.add(int(i))
                 n_here += 1
             if n_here == 0:
@@ -440,7 +483,7 @@ def fuse_tsdf_tiled(
                 continue
 
             pcd = vol.extract_point_cloud()
-            pts = np.asarray(pcd.points)
+            pts = np.asarray(pcd.points, dtype=np.float64).copy()
             cols = np.asarray(pcd.colors)
             del vol, pcd
             gc.collect()
@@ -458,6 +501,10 @@ def fuse_tsdf_tiled(
                         "local_sparse_points": plan["local_sparse_points"],
                     })
                 continue
+
+            # Open3D integrated this tile in the local frame selected above. Restore mission CRS before
+            # core cropping, streaming, and diagnostics; all downstream artifacts remain georeferenced.
+            pts += origin
 
             # crop to the core cell so overlapping tiles don't emit duplicate points
             keep = (

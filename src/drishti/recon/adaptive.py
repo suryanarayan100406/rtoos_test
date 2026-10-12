@@ -7,7 +7,15 @@ import numpy as np
 
 from ..logging import get_logger
 from ..runtime.deps import require
-from .tsdf import _clip_depth_to_box, _integrate, _make_volume, build_tile_plans, depth_world_chunks
+from .camera import recenter_extrinsic
+from .tsdf import (
+    _clip_depth_to_box,
+    _integrate,
+    _make_volume,
+    build_tile_plans,
+    depth_world_chunks,
+    tile_origin_from_specs,
+)
 
 
 def fuse_metric_tiles(frame_specs, load, fx, fy, cx, cy, width, height, *, voxel_m,
@@ -63,6 +71,7 @@ def fuse_metric_tiles(frame_specs, load, fx, fy, cx, cy, width, height, *, voxel
             if tile_observer:
                 tile_observer(dict(event))
             here = set()
+            origin = tile_origin_from_specs(frame_specs, sel)
             for slab in range(n_slabs):
                 zl = lo + slab * max_vertical_slab_m
                 zh = np.nextafter(hi, np.inf) if slab == n_slabs - 1 else zl + max_vertical_slab_m
@@ -80,14 +89,20 @@ def fuse_metric_tiles(frame_specs, load, fx, fy, cx, cy, width, height, *, voxel
                                                  zl - sdf_trunc, zh + sdf_trunc)
                     clipped[~np.isfinite(clipped) | (clipped >= depth_trunc)] = 0
                     if np.any(clipped > 0):
-                        _integrate(o3d, volume, intr, color, clipped, ext, depth_trunc)
+                        _integrate(o3d, volume, intr, color, clipped,
+                                   recenter_extrinsic(ext, origin), depth_trunc)
                         here.add(index)
                         used.add(index)
                         count += 1
                     del loaded, color, depth, clipped
                 if count:
                     cloud = volume.extract_point_cloud()
-                    points, colors = np.asarray(cloud.points), np.asarray(cloud.colors)
+                    points = np.asarray(cloud.points, dtype=np.float64).copy()
+                    colors = np.asarray(cloud.colors)
+                    if len(points):
+                        # Open3D fused this slab in a local metric frame; restore mission CRS before
+                        # XYZ core cropping and before handing points to the streaming sink.
+                        points += origin
                     extracted = len(points)
                     event["points_extracted"] += extracted
                     keep = ((points[:, 0] >= core["x_lo"]) & (points[:, 0] < core["x_hi"])

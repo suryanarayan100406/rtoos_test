@@ -78,7 +78,7 @@ Install the extras for the stages you want to run **in this environment**:
 | `video` | `av`, `opencv-python-headless` | S0 ingest, S1 frame-QA, S3/S4 I/O |
 | `poses` | `pycolmap` | S2 camera poses (SfM) |
 | `geo` | `pyproj`, `rasterio`, `shapely` | S2 projection, S9 GeoTIFFs, report validation |
-| `recon` | `open3d`, `trimesh`, `pygltflib` | S7 dense, S8 mesh, S10 export |
+| `recon` | `open3d==0.19.0`, `trimesh`, `pygltflib` | S7 dense, S8 mesh, S10 export |
 | `depth` | `torch`, `openvino`, `onnx` | S3 masking, S4 metric depth |
 | `telem` | `pymavlink`, `piexif` | MAVLink/CSV/EXIF telemetry parsing |
 | `server` | `fastapi`, `uvicorn` | the API server + web viewer |
@@ -98,8 +98,10 @@ pip install -e ".[video,poses,geo,recon,depth,telem]"
   ```
 - **Open3D has no wheel for Python 3.13** (it caps at cp312). Colab/Kaggle currently run 3.13, so a plain
   `pip install -e ".[recon]"` will *abort the whole install* there and take the `drishti` CLI down with
-  it. On those machines **use the notebooks** (`notebooks/drishti_colab_full.ipynb`), which build an
-  isolated Python 3.12 env with `uv`. On your own machine, just use Python ≤3.12.
+  it. The shipped path also pins **Open3D 0.19.0**: hosted Open3D 0.20.0's legacy
+  `ScalableTSDFVolume` can extract an empty cloud even from valid depth, so do not override the pin.
+  On those machines **use the notebooks** (`notebooks/drishti_colab_full.ipynb`), which build an isolated
+  Python 3.12 env with `uv` and install the pinned package. On your own machine, use Python ≤3.12.
 - **FBX export needs Blender ≥4.0 on PATH.** Everything else exports without it.
 
 ### 2.3 Always run the doctor first
