@@ -9,7 +9,7 @@ pointers into `docs/`.
 **Audience:** AI coding agents (Claude Code and others) and human contributors. This is an operational
 context file, not a pitch — for the evaluator-facing story see [`docs/00-MASTER-OVERVIEW.md`](docs/00-MASTER-OVERVIEW.md).
 
-**Status:** Living document. **Last updated:** 2026-10-09 · **Current phase:** Phases 1–6 —
+**Status:** Living document. **Last updated:** 2026-10-10 · **Current phase:** Phases 1–6 —
 and [Decision log](#9-decision-log-append-only) sections current on every meaningful change.
 
 ---
@@ -310,13 +310,16 @@ the full beginner path: source/GPU setup, every notebook section, sample or pers
 selection, exact resume limitations, archive recovery, and local viewing. Instructions were checked
 against the notebook/CLI; fresh native/cloud end-to-end validation remains the next engineering proof.
 
-**Now / Next:** The user's hosted `waterbury` run `colab-full-20261009-174336` completed S0 (6.4 s)
-but failed S1 on a mismatched strict zip in GNSS-track coverage. Corrected S1 to pair the two equal-length
-adjacent-frame slices and added stage-level regression coverage. Resume that existing bundle after
-patching its checkout, or commit/push the corrected source and reimport the updated full notebook.
-The notebook now prefers Kaggle's writable root over `/content`, checks for the old S1 source bug,
-installs texture/export extras, supports direct bundle/ZIP recovery, and preserves retry logs.
-S2 onward is untested in this attempt. Historical run/fix context follows.
+**Now / Next:** The hosted `waterbury` run `colab-full-20261010-060659` completed S0–S4 and reached
+S7, but adaptive metric TSDF fusion completed all tile/slab work after 6494.5 s and emitted an empty
+cloud. The full archive is now recovered in the repository root and verifies cleanly; it contains all
+S0–S4 artifacts and the empty `s7_dense/dense.ply`, but no old `tile_states.json`. A native Open3D probe
+against the archived inputs reproduced the adaptive crop behavior: one real tile extracted 42,293 points
+but emitted 0 because its points fell outside that tile's core; an adjacent tile retained points. The full
+run's all-empty result still needs hosted confirmation, so `fuse_tsdf_tiled` now retries the proven legacy
+camera-center tiler when adaptive completes with zero emitted points. Push/reimport this source, restore
+the full archive through notebook Option C, and resume S7 with the same 6B settings; S8–report remain
+unvalidated on Waterbury.
 
 The first real `aukerman` full run produced a **fragmented/floating-block mesh** — root-caused
 to **two independent run-config bugs** (sequential matcher → pose drift; `depth_trunc` clipped below the
@@ -399,6 +402,26 @@ list of what's done vs. remaining directly under this table.
 ---
 
 ## 9. Decision log (append-only)
+
+- **2026-10-10 — Waterbury adaptive S7 empty-cloud failure and fail-safe fallback.** The hosted run
+  `colab-full-20261010-060659` (EPSG:32618, 216-frame Waterbury input) completed S0–S4, then spent
+  **6494.5 s** traversing adaptive metric-footprint TSDF tiles and vertical slabs. The final log ended
+  at `tile 8:31 slab 1/1` and S7 raised `TSDF produced an empty cloud`; this was not an OOM, and S8,
+  S9, S10, and report never ran. The recovered full archive is **2,018,880,836 bytes**, passes ZIP
+  integrity testing, and contains 955 entries including all 216 metric depth maps, 216 poses, rectified
+  views, the console log, and an empty 0-vertex `s7_dense/dense.ply`; the old source did not persist
+  `tile_states.json` before failure. A native Open3D probe against the archived inputs reproduced one
+  real tile with 42,293 extracted points and 0 core-cropped points, while an adjacent tile retained
+  points. This proves the adaptive crop can discard a tile's extracted surface, but does not by itself
+  prove every Waterbury tile was discarded. The report notebook cell correctly showed no report artifacts
+  because the report stage was never reached.
+  `recon/tsdf.py` now counts adaptive sink writes and, only when adaptive completes with zero output,
+  retries the existing memory-bounded legacy camera-center tiler over the same metric frames. S7 records
+  both backend attempts and persists tile evidence atomically while fusion runs. This remains real TSDF
+  fusion; the fallback emits a warning rather than hiding the backend path. Added regression coverage for
+  the empty adaptive result, streaming/non-streaming sinks, and failure evidence. Validation in
+  an isolated Python 3.12 environment: **176 tests passed, 1 optional exporter test skipped, Ruff clean**;
+  Open3D/native cloud fusion and a fresh Waterbury run remain pending.
 
 - **2026-10-09 — commit/reimport-ready full notebook after the S1 failure.** Set the editable source
   URL to the user's `suryanarayan100406/rtoos_test` repository, with a setup check rejecting the known

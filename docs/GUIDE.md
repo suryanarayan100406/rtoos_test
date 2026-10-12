@@ -725,8 +725,12 @@ its **outputs**, its measured **confidence** formula, and its **degradation** be
 - **Libraries:** Open3D (TSDF), gsplat + torch (Gaussian), a pure-Python PLY writer; NumPy.
 - **Outputs:** dense cloud/checkpoint + `s7_dense/dense.json`; TSDF runs also emit `tile_states.json` with
   `reconstructed` or `unknown/unobservable` class, evidence counts, local Z source, confidence, and reason.
+  The tile file is atomically updated during fusion, so a failed hosted stage retains diagnostic evidence;
+  it records separate adaptive and legacy attempts when the adaptive backend completes with no points.
 - **Confidence:** fraction of poses actually fused — `used_poses / total_poses`.
-- **Degradation:** Gaussian requires CUDA and gsplat and fails loudly if unavailable; empty fusion raises.
+- **Degradation:** Gaussian requires CUDA and gsplat and fails loudly if unavailable. An adaptive TSDF
+  result that completes with zero emitted points is logged and retried with camera-center tiling; if that
+  retry is also empty, S7 fails with the extracted/emitted counts and the saved tile-evidence path.
 
 ### S8 — `s8_mesh` — Surface mesh
 - **Requires:** `s7_dense`. **Compute:** `local` (Open3D Poisson on CPU).

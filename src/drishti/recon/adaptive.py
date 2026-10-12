@@ -59,6 +59,9 @@ def fuse_metric_tiles(frame_specs, load, fx, fy, cx, cy, width, height, *, voxel
         if np.isfinite(lo):
             event["z_band"] = [lo, hi]
             n_slabs = max(1, int(np.ceil((hi - lo) / max_vertical_slab_m)))
+            event.update(status="running", reason=None, n_vertical_slabs=n_slabs, slabs_completed=0)
+            if tile_observer:
+                tile_observer(dict(event))
             here = set()
             for slab in range(n_slabs):
                 zl = lo + slab * max_vertical_slab_m
@@ -66,6 +69,7 @@ def fuse_metric_tiles(frame_specs, load, fx, fy, cx, cy, width, height, *, voxel
                 log.info("tile %s slab %d/%d z=%.2f..%.2f", event["tile_id"], slab + 1, n_slabs, zl, zh)
                 volume = _make_volume(o3d, voxel_m, sdf_trunc)
                 count = 0
+                extracted = emitted = 0
                 for index in sel:
                     loaded = load(frame_specs[index])
                     if loaded is None:
@@ -84,12 +88,14 @@ def fuse_metric_tiles(frame_specs, load, fx, fy, cx, cy, width, height, *, voxel
                 if count:
                     cloud = volume.extract_point_cloud()
                     points, colors = np.asarray(cloud.points), np.asarray(cloud.colors)
-                    event["points_extracted"] += len(points)
+                    extracted = len(points)
+                    event["points_extracted"] += extracted
                     keep = ((points[:, 0] >= core["x_lo"]) & (points[:, 0] < core["x_hi"])
                             & (points[:, 1] >= core["y_lo"]) & (points[:, 1] < core["y_hi"])
                             & (points[:, 2] >= zl - sdf_trunc if slab == 0 else points[:, 2] >= zl)
                             & (points[:, 2] < zh + sdf_trunc if slab == n_slabs - 1 else points[:, 2] < zh))
-                    event["points_emitted"] += int(keep.sum())
+                    emitted = int(keep.sum())
+                    event["points_emitted"] += emitted
                     if keep.any():
                         if sink:
                             sink(points[keep], colors[keep])
@@ -99,17 +105,26 @@ def fuse_metric_tiles(frame_specs, load, fx, fy, cx, cy, width, height, *, voxel
                     del cloud, points, colors
                 del volume
                 gc.collect()
+                log.info("tile %s slab %d/%d: frames=%d extracted=%d emitted=%d",
+                         event["tile_id"], slab + 1, n_slabs, count, extracted, emitted)
+                event["frames_integrated"] = len(here)
+                event["support_frame_ids"] = [frame_specs[i].get("name", str(i)) for i in sorted(here)]
+                event["slabs_completed"] = slab + 1
+                if tile_observer:
+                    tile_observer(dict(event))
             event["frames_integrated"] = len(here)
             event["support_frame_ids"] = [frame_specs[i].get("name", str(i)) for i in sorted(here)]
             event["n_vertical_slabs"] = n_slabs
             if event["points_emitted"]:
                 event.update(status="reconstructed", geometry_class="reconstructed", reason=None)
             else:
-                event["reason"] = "fusion_empty" if here else "no_valid_depth_support"
+                event["status"] = "unobservable"
+                event["reason"] = ("no_surface_in_core" if event["points_extracted"] else
+                                   "fusion_empty" if here else "no_valid_depth_support")
         elif sel:
             event["reason"] = "no_valid_depth_support"
         if tile_observer:
-            tile_observer(event)
+            tile_observer(dict(event))
     if not used:
         raise RuntimeError("TSDF fusion integrated 0 frames (no valid metric depth)")
     empty = np.empty((0, 3), float)

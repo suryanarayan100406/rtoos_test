@@ -337,7 +337,113 @@ def test_metric_footprint_dispatches_to_adaptive_fusion(monkeypatch):
     assert used == 1
     assert len(points) > 0
     assert len(colors) == len(points)
-    assert events and events[0]["status"] == "reconstructed"
+    assert events[0]["status"] == "running"
+    assert events[-1]["status"] == "reconstructed"
+    assert events[-1]["slabs_completed"] == events[-1]["n_vertical_slabs"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_metric_footprint_empty_adaptive_falls_back_to_legacy(monkeypatch, stream):
+    """An adaptive backend that emits no points must not fail a complete S7 run silently."""
+    _install_fake_open3d(monkeypatch)
+    from drishti.recon import adaptive
+    from drishti.recon.tsdf import fuse_tsdf_tiled
+
+    empty = np.empty((0, 3), dtype=float)
+    monkeypatch.setattr(
+        adaptive,
+        "fuse_metric_tiles",
+        lambda *args, **kwargs: (empty, empty, 1),
+    )
+
+    spec = _spec(0.0, 0.0)
+    # If footprints leak into the retry's planner, it looks here instead of under the camera.
+    spec["footprint_xy"] = [1000.0, 1000.0, 1010.0, 1010.0]
+    chunks = []
+    events = []
+    points, colors, used = fuse_tsdf_tiled(
+        [spec], _load, fx=1.0, fy=1.0, cx=2.0, cy=2.0, width=4, height=4,
+        voxel_m=0.05, sdf_trunc=0.2, depth_trunc=150.0, tile_m=10.0, overlap_m=1.0,
+        sink=(lambda p, c: chunks.append((p.copy(), c.copy()))) if stream else None,
+        tile_observer=events.append,
+    )
+
+    assert used == 1
+    assert len(points) == len(colors) == (0 if stream else 1)
+    if stream:
+        assert sum(len(p) for p, _ in chunks) == 1
+    assert spec["footprint_xy"] == [1000.0, 1000.0, 1010.0, 1010.0]
+    assert events[-1]["fusion_backend"] == "legacy_center"
+    assert events[-1]["fallback_reason"] == "adaptive_empty_cloud"
+
+
+def test_successful_adaptive_sink_does_not_retry(monkeypatch):
+    """Streaming success returns empty arrays, but must never append a second reconstruction."""
+    from drishti.recon import adaptive, tsdf
+
+    points = np.array([[10.0, 20.0, 30.0]])
+    colors = np.ones((1, 3))
+    chunks = []
+
+    def fuse(*args, sink, tile_observer, **kwargs):
+        sink(points, colors)
+        tile_observer({"tile_id": "0:0", "points_emitted": 1})
+        return np.empty((0, 3)), np.empty((0, 3)), 1
+
+    monkeypatch.setattr(adaptive, "fuse_metric_tiles", fuse)
+    monkeypatch.setattr(tsdf, "require", lambda *a, **k: pytest.fail("unexpected legacy retry"))
+    spec = _spec(0, 0)
+    spec["footprint_xy"] = [-2, -2, 2, 2]
+    result = tsdf.fuse_tsdf_tiled(
+        [spec], _load, 1, 1, 2, 2, 4, 4, 0.05, 0.2, 150, 10, 1,
+        sink=lambda p, c: chunks.append((p.copy(), c.copy())),
+    )
+    assert len(result[0]) == 0 and result[2] == 1
+    assert len(chunks) == 1
+    np.testing.assert_array_equal(chunks[0][0], points)
+
+
+def test_adaptive_exception_after_streaming_is_not_retried(monkeypatch):
+    from drishti.recon import adaptive, tsdf
+
+    def fail(*args, sink, **kwargs):
+        sink(np.zeros((1, 3)), np.ones((1, 3)))
+        raise RuntimeError("native fusion failed")
+
+    monkeypatch.setattr(adaptive, "fuse_metric_tiles", fail)
+    monkeypatch.setattr(tsdf, "require", lambda *a, **k: pytest.fail("unexpected legacy retry"))
+    spec = _spec(0, 0)
+    spec["footprint_xy"] = [-2, -2, 2, 2]
+    with pytest.raises(RuntimeError, match="native fusion failed"):
+        tsdf.fuse_tsdf_tiled(
+            [spec], _load, 1, 1, 2, 2, 4, 4, 0.05, 0.2, 150, 10, 1,
+            sink=lambda p, c: None,
+        )
+
+
+@pytest.mark.parametrize("extract_empty", [False, True])
+def test_adaptive_diagnostics_distinguish_extraction_from_cropping(monkeypatch, extract_empty):
+    from drishti.recon.adaptive import fuse_metric_tiles
+
+    _install_fake_open3d(monkeypatch)
+    if extract_empty:
+        monkeypatch.setattr(_FakeVolume, "extract_point_cloud", lambda self: _FakePCD(np.empty((0, 3))))
+    spec = _spec(0, 0)
+    spec["extr"] = _nadir_extr(0, 0, 10)
+    spec["footprint_xy"] = [-2, -2, 2, 2]
+    # Fake volume emits the camera Z=10, outside the real depth support at Z=9.
+    events = []
+    points, _, used = fuse_metric_tiles(
+        [spec], _load, 100, 100, 2, 2, 4, 4, voxel_m=0.05, sdf_trunc=0.2,
+        depth_trunc=150, tile_m=10, overlap_m=1, surface_points=None, z_margin_m=0,
+        min_local_surface_points=3, sink=None, tile_observer=events.append, max_vertical_slab_m=10,
+    )
+    assert len(points) == 0 and used == 1
+    assert events[0]["slabs_completed"] == 0
+    assert events[-2]["slabs_completed"] == 1
+    assert events[-1]["points_extracted"] == (0 if extract_empty else 1)
+    assert events[-1]["points_emitted"] == 0
+    assert events[-1]["reason"] == ("fusion_empty" if extract_empty else "no_surface_in_core")
 
 
 def test_tiled_fusion_sink_streams_tiles_and_returns_empty(monkeypatch):

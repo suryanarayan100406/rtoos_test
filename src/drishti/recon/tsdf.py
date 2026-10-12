@@ -306,22 +306,61 @@ def fuse_tsdf_tiled(
     if any(spec.get("footprint_xy") is not None for spec in frame_specs):
         from .adaptive import fuse_metric_tiles
 
-        return fuse_metric_tiles(
+        # Retry only a completed, empty adaptive result. Streaming returns empty arrays even on
+        # success, so count actual sink writes; progress events can repeat cumulative tile counts.
+        adaptive_emitted = 0
+
+        def observe_adaptive(event: dict) -> None:
+            if tile_observer is not None:
+                tile_observer({**event, "fusion_backend": "adaptive_metric"})
+
+        def emit_adaptive(points: np.ndarray, colors: np.ndarray) -> None:
+            nonlocal adaptive_emitted
+            if sink is not None:
+                sink(points, colors)
+                adaptive_emitted += len(points)
+
+        adaptive_result = fuse_metric_tiles(
             frame_specs, load, fx, fy, cx, cy, width, height, voxel_m=voxel_m,
             sdf_trunc=sdf_trunc, depth_trunc=depth_trunc, tile_m=tile_m, overlap_m=overlap_m,
             surface_points=surface_points, z_margin_m=z_margin_m,
-            min_local_surface_points=min_local_surface_points, sink=sink, tile_observer=tile_observer,
+            min_local_surface_points=min_local_surface_points,
+            sink=emit_adaptive if sink is not None else None, tile_observer=observe_adaptive,
             max_vertical_slab_m=max_vertical_slab_m,
         )
+        if adaptive_emitted or len(adaptive_result[0]):
+            return adaptive_result
+        log.warning(
+            "adaptive metric TSDF completed with no emitted points; "
+            "retrying legacy camera-center tiling"
+        )
+
+        def observe_legacy(event: dict) -> None:
+            if tile_observer is not None:
+                tile_observer({
+                    **event,
+                    "fusion_backend": "legacy_center",
+                    "fallback_reason": "adaptive_empty_cloud",
+                })
+        # Do not let the retry re-enter footprint-based planning.  The legacy path must use camera
+        # centers for both its scene extent and frame membership; otherwise this fallback would only
+        # bypass adaptive Z slabs while retaining the same unproven footprint contract.
+        legacy_frame_specs = [
+            {key: value for key, value in spec.items() if key != "footprint_xy"}
+            for spec in frame_specs
+        ]
+    else:
+        observe_legacy = tile_observer
+        legacy_frame_specs = frame_specs
     o3d = require("open3d", purpose="TSDF fusion")
     intr = o3d.camera.PinholeCameraIntrinsic(int(width), int(height), fx, fy, cx, cy)
 
     plans = build_tile_plans(
-        frame_specs, tile_m, overlap_m, surface_points=surface_points,
+        legacy_frame_specs, tile_m, overlap_m, surface_points=surface_points,
         z_margin_m=z_margin_m, fallback_z_band=(z_lo, z_hi),
         min_local_surface_points=min_local_surface_points,
     )
-    centers = np.asarray([s["center_xy"] for s in frame_specs], dtype=float)
+    centers = np.asarray([s["center_xy"] for s in legacy_frame_specs], dtype=float)
     mins = centers.min(axis=0)
     maxs = centers.max(axis=0)
     nx = max(p["ix"] for p in plans) + 1
@@ -349,8 +388,8 @@ def fuse_tsdf_tiled(
             iy_lo, iy_hi = plan["window"]["y_lo"], plan["window"]["y_hi"]
             sel = np.asarray(plan["selected"], dtype=int)
             if len(sel) == 0:
-                if tile_observer is not None:
-                    tile_observer({
+                if observe_legacy is not None:
+                    observe_legacy({
                         "tile_id": f"{ix}:{iy}", "ix": ix, "iy": iy,
                         "candidate_frames": 0, "frames_integrated": 0,
                         "points_extracted": 0, "points_emitted": 0,
@@ -387,8 +426,8 @@ def fuse_tsdf_tiled(
             if n_here == 0:
                 del vol
                 gc.collect()
-                if tile_observer is not None:
-                    tile_observer({
+                if observe_legacy is not None:
+                    observe_legacy({
                         "tile_id": f"{ix}:{iy}", "ix": ix, "iy": iy,
                         "candidate_frames": len(sel), "frames_integrated": 0,
                         "points_extracted": 0, "points_emitted": 0,
@@ -406,8 +445,8 @@ def fuse_tsdf_tiled(
             del vol, pcd
             gc.collect()
             if len(pts) == 0:
-                if tile_observer is not None:
-                    tile_observer({
+                if observe_legacy is not None:
+                    observe_legacy({
                         "tile_id": f"{ix}:{iy}", "ix": ix, "iy": iy,
                         "candidate_frames": len(sel), "frames_integrated": n_here,
                         "points_extracted": 0, "points_emitted": 0,
@@ -436,8 +475,8 @@ def fuse_tsdf_tiled(
                 else:
                     all_pts.append(pts[keep])
                     all_cols.append(cols[keep])
-            if tile_observer is not None:
-                tile_observer({
+            if observe_legacy is not None:
+                observe_legacy({
                     "tile_id": f"{ix}:{iy}", "ix": ix, "iy": iy,
                     "candidate_frames": len(sel), "frames_integrated": n_here,
                     "points_extracted": int(len(pts)), "points_emitted": int(n_keep),

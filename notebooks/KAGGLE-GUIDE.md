@@ -562,6 +562,13 @@ Before treating the run as usable, check model coverage visually, review unknown
 reasons, and confirm the formats you need actually exist. Reconstruction scale/georeference and
 checkpoint accuracy are separate from file integrity.
 
+During S7, `tile_states.json` is atomically updated after each tile/slab progress event. If adaptive
+metric-footprint fusion completes with no points, the runner logs a warning and retries the same metric
+inputs with the legacy camera-center tiler; the file records both attempts and the final backend. If the
+retry also fails, download the **full** archive before closing the session so the saved evidence can be
+classified. A successful fallback is marked as degraded in the manifest; it is still real TSDF fusion,
+not a placeholder cloud.
+
 ## 8. Download and preserve results: notebook section 9
 
 Run the export/archive cell. It creates **both** ZIPs beside the bundle, normally:
@@ -821,6 +828,7 @@ original inputs and heavy libraries.
 | Missing `model.glb` | Check `exports.json`. GLB must be explicitly requested before a fresh run; glTF alone is the current default. |
 | Missing FBX / 3D Tiles / Potree | Read that format's recorded reason; optional tools or conversion may be unavailable. Other formats are checked independently. |
 | Missing `report.html` | The pipeline probably stopped before `report`; inspect the manifest and console. You can still archive a partial bundle. |
+| `s7_dense: TSDF produced an empty cloud` | Use the current source: adaptive S7 now retries the legacy camera-center tiler and writes incremental `s7_dense/tile_states.json`. Inspect the saved extracted/emitted counts; download the full archive before closing the session if both backends fail. |
 | `verify` reports missing files | Use the full archive, not slim. On a full bundle, check extraction/download completeness before trusting it. |
 | Viewer lists no runs | Check the directory nesting and `/api/health`'s `runs_dir`; start the API at the repository root. |
 | Viewer shows status but no 3D model | Check the `3dtiles` export result. Open a successful GLB/OBJ/PLY in a desktop viewer. |

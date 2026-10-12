@@ -21,7 +21,7 @@ class DenseStage(Stage):
     compute = ComputeNeed(vram_gb=6.0, openvino_ok=False)
 
     def params(self, cfg: DrishtiConfig) -> dict[str, Any]:
-        return {"dense": cfg.dense.model_dump(), "contract_version": 3}
+        return {"dense": cfg.dense.model_dump(), "contract_version": 4}
 
     def run(self, bundle: Bundle, cfg: DrishtiConfig, rt: Runtime) -> StageResult:
         import numpy as np
@@ -137,6 +137,25 @@ class DenseStage(Stage):
         tile = cfg.dense.tile
         ply = bundle.stage_dir(self.name) / "dense.ply"
         tile_states: dict[str, dict] = {}
+        attempts: dict[str, dict[str, dict]] = {}
+        fusion_backend: str | None = None
+        fallback_reason: str | None = None
+        tile_states_ref = f"{self.name}/tile_states.json"
+
+        def _persist_tile_states(status: str, error: str | None = None) -> None:
+            # Atomic snapshots survive stage exceptions and interrupted writes. They still need to be
+            # downloaded/archived before the hosted machine's ephemeral disk is discarded.
+            temp_ref = tile_states_ref + ".tmp"
+            bundle.write_json(temp_ref, {
+                "schema_version": 2, "status": status, "error": error,
+                "fusion_backend": fusion_backend, "fallback_reason": fallback_reason,
+                "geometry_classes": ["observed", "reconstructed", "inferred", "unknown"],
+                "authoritative_classes": ["observed", "validated_reconstructed"],
+                "tiles": list(tile_states.values()),
+                "attempts": {backend: list(states.values()) for backend, states in attempts.items()},
+            })
+            bundle.artifact_path(temp_ref).replace(bundle.artifact_path(tile_states_ref))
+
         sparse_points = None
         if tile.enabled:
             # Vertical surface envelope from S2's metric sparse points (COLMAP-triangulated true surface,
@@ -164,27 +183,53 @@ class DenseStage(Stage):
             # aerial scene, AND stream each tile's points straight to the PLY on disk (freeing them) so RAM
             # never holds the full cloud — the ~100M-point accumulation that OOM-killed the whole-scene run.
             def _observe_tile(event: dict) -> None:
+                nonlocal fusion_backend, fallback_reason
+                event = dict(event)
+                backend = event.get("fusion_backend", "legacy_center")
+                if fusion_backend != backend:
+                    # Tile IDs belong to different grids. Keep failed-attempt evidence separately;
+                    # the active tile list and final coverage counts describe only the selected backend.
+                    tile_states.clear()
+                    fusion_backend = backend
+                fallback_reason = event.get("fallback_reason", fallback_reason)
+                if event.get("z_band") is not None:
+                    event["z_band"] = [v if v is None or np.isfinite(v) else None for v in event["z_band"]]
                 tile_states[event["tile_id"]] = event
+                attempts.setdefault(backend, {})[event["tile_id"]] = event
+                _persist_tile_states("running")
 
-            with StreamingPlyWriter(ply, with_color=True, coordinate_dtype="float64") as writer:
-                _, _, used = fuse_tsdf_tiled(
-                    specs, _load, fx, fy, cx, cy, width, height,
-                    voxel_m=voxel, sdf_trunc=4.0 * voxel, depth_trunc=cfg.dense.depth_trunc_m,
-                    tile_m=tile.tile_m, overlap_m=tile.overlap_m, z_lo=z_lo, z_hi=z_hi,
-                    sink=writer.add, surface_points=sparse_points,
-                    z_margin_m=cfg.dense.ground_band_margin_m,
-                    min_local_surface_points=cfg.dense.min_local_surface_points,
-                    tile_observer=_observe_tile,
-                    max_vertical_slab_m=cfg.dense.max_vertical_slab_m,
-                )
-            n_points = writer.count
-            if n_points == 0:
-                raise RuntimeError("s7_dense: TSDF produced an empty cloud.")
+            _persist_tile_states("running")
+            try:
+                with StreamingPlyWriter(ply, with_color=True, coordinate_dtype="float64") as writer:
+                    _, _, used = fuse_tsdf_tiled(
+                        specs, _load, fx, fy, cx, cy, width, height,
+                        voxel_m=voxel, sdf_trunc=4.0 * voxel, depth_trunc=cfg.dense.depth_trunc_m,
+                        tile_m=tile.tile_m, overlap_m=tile.overlap_m, z_lo=z_lo, z_hi=z_hi,
+                        sink=writer.add, surface_points=sparse_points,
+                        z_margin_m=cfg.dense.ground_band_margin_m,
+                        min_local_surface_points=cfg.dense.min_local_surface_points,
+                        tile_observer=_observe_tile,
+                        max_vertical_slab_m=cfg.dense.max_vertical_slab_m,
+                    )
+                    n_points = writer.count
+                    if n_points == 0:
+                        n_extracted = sum(int(s.get("points_extracted", 0)) for s in tile_states.values())
+                        n_emitted = sum(int(s.get("points_emitted", 0)) for s in tile_states.values())
+                        raise RuntimeError(
+                            "s7_dense: TSDF produced an empty cloud "
+                            f"(backend={fusion_backend}, tiles={len(tile_states)}, "
+                            f"points_extracted={n_extracted}, points_emitted={n_emitted}); "
+                            f"inspect {tile_states_ref}."
+                        )
+            except BaseException as exc:
+                _persist_tile_states("failed", str(exc))
+                raise
             if writer.bbox_min is None or writer.bbox_max is None:
                 raise RuntimeError("s7_dense: streaming writer has no bounding box")
             bbox_min = writer.bbox_min.tolist()
             bbox_max = writer.bbox_max.tolist()
         else:
+            fusion_backend = "single_volume"
             points, colors, used = fuse_tsdf(
                 (_load(s) for s in specs), fx, fy, cx, cy, width, height,
                 voxel_m=voxel, sdf_trunc=4.0 * voxel, depth_trunc=cfg.dense.depth_trunc_m,
@@ -202,11 +247,7 @@ class DenseStage(Stage):
                 "confidence": round(used / max(1, len(specs)), 4),
             }
 
-        tile_states_ref = bundle.write_json(f"{self.name}/tile_states.json", {
-            "geometry_classes": ["observed", "reconstructed", "inferred", "unknown"],
-            "authoritative_classes": ["observed", "validated_reconstructed"],
-            "tiles": list(tile_states.values()),
-        })
+        _persist_tile_states("complete")
         reconstructed_tiles = sum(
             1 for state in tile_states.values() if state.get("geometry_class") == "reconstructed"
         )
@@ -218,6 +259,7 @@ class DenseStage(Stage):
         depth_frames = int(depth_doc.get("n_frames", 0))
         dense_ref = bundle.write_json(f"{self.name}/dense.json", {
             "method": "tsdf", "voxel_m": voxel, "n_frames_fused": used,
+            "fusion_backend": fusion_backend, "fallback_reason": fallback_reason,
             "n_points": n_points, "cloud": bundle.relpath(ply),
             "bbox_min": bbox_min, "bbox_max": bbox_max,
             "geometry_class": "reconstructed",
@@ -229,14 +271,20 @@ class DenseStage(Stage):
             "metric_aligned_frame_fraction": round(metric_aligned / max(1, depth_frames), 4),
         })
 
+        limitations = []
+        if fallback_reason:
+            limitations.append("adaptive TSDF emitted no points; used legacy camera-center tiling")
+        if unknown_tiles:
+            limitations.append(f"{unknown_tiles} tiles have no reconstructed surface; inspect tile_states.json")
         return StageResult(
             outputs={"dense": dense_ref, "cloud": bundle.relpath(ply)},
             metrics={"method": "tsdf", "n_points": n_points, "n_frames_fused": used,
+                     "fusion_backend": fusion_backend, "fallback_reason": fallback_reason,
                      "voxel_m": voxel, "n_reconstructed_tiles": reconstructed_tiles,
                      "n_unknown_tiles": unknown_tiles,
                      "metric_aligned_frame_fraction": round(metric_aligned / max(1, depth_frames), 4),
                      "measurement_authoritative": False},
             confidence_summary=None,
             confidence_ref=tile_states_ref,
-            degraded_reason=f"{unknown_tiles} tiles have no reconstructed surface; inspect tile_states.json" if unknown_tiles else None,
+            degraded_reason="; ".join(limitations) if limitations else None,
         )
